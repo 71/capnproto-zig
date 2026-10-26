@@ -1,0 +1,83 @@
+name: Continuous integration
+
+on:
+  push:
+    branches: [ main ]
+  pull_request: {}
+
+jobs:
+  check:
+    name: Check
+    runs-on: ubuntu-latest
+
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      create-release: ${{ steps.version.outputs.create-release }}
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: mlugg/setup-zig@8d6198c65fb0feaa111df26e6b467fea8345e46f
+        with:
+          version: 0.17.0
+
+      - name: Check format
+        run: zig fmt --check .
+
+      - name: Build capnp
+        run: zig build
+
+      - name: Run binary
+        shell: bash
+        run: |
+          zig-out/bin/capnp --version
+
+          # Make sure we can import standard schemas. `capnp` mmaps source files, so we cannot use
+          # `<(...)`.
+          echo '@0x926b047d6abc4dbf; using import "/capnp/schema.capnp".Node;' > "$RUNNER_TEMP/node.capnp"
+
+          echo -ne '\x10\x0e\x50\x06\x06\x00\x05\x11\x15\x3a\x00\x04\x3f\x65\x6c\x6c\x69\x6f\x74' \
+            | zig-out/bin/capnp convert packed:json "$RUNNER_TEMP/node.capnp" Node \
+            | jq --raw-output .displayName \
+            | grep elliot
+
+      - name: Get version
+        id: version
+        run: |
+          version=v$(sed -En 's/ +\.version = \"([0-9.]+)\",/\1/p' build.zig.zon)
+          create_release=$(git ls-remote --exit-code --tags origin $version >/dev/null && echo false || echo true)
+
+          echo version=$version >> "$GITHUB_OUTPUT"
+          echo create-release=$create_release >> "$GITHUB_OUTPUT"
+
+  release:
+    name: Release
+    needs: check
+    if: github.event_name == 'push' && needs.check.outputs.create-release == 'true'
+
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: mlugg/setup-zig@8d6198c65fb0feaa111df26e6b467fea8345e46f
+        with:
+          version: 0.17.0
+
+      - name: Build all for release
+        run: zig build all --release=safe -Dstrip=true
+
+      - name: Create release
+        run: |
+          capnproto_version=$(sed -En 's,.*"https://github.com/capnproto/capnproto/archive/(.+).zip".*,\1,p' build.zig.zon)
+
+          gh release create ${{ needs.check.outputs.version }} \
+            zig-out/capnp* \
+            zig-out/*.tar.zst \
+            --repo "$GITHUB_REPOSITORY" \
+            --notes "capnproto-zig ${{ needs.check.outputs.version }} (capnproto $capnproto_version)"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

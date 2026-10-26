@@ -1,0 +1,75 @@
+--- a/c++/src/capnp/compiler/capnp.c++
++++ b/c++/src/capnp/compiler/capnp.c++
+@@ -56,6 +56,7 @@
+ #include <errno.h>
+ #include <stdlib.h>
+ #include <kj/map.h>
++#include <kj/encoding.h>
+ 
+ #if _WIN32
+ #include <process.h>
+@@ -66,6 +67,10 @@
+ #include <sys/wait.h>
+ #endif
+ 
++#if __APPLE__
++#include <mach-o/dyld.h>
++#endif
++
+ #if HAVE_CONFIG_H
+ #include "config.h"
+ #endif
+@@ -348,6 +353,18 @@
+     }
+ 
+     if (addStandardImportPaths) {
++      // If the executable is in `<prefix>/bin/`, search `<prefix>/include/` first so that the
++      // schemas shipped alongside the binary match its version.
++      KJ_IF_SOME(exePath, getExecutablePath()) {
++        auto binDir = disk->getCurrentPath().evalNative(exePath).parent();
++        if (binDir.size() > 0 && binDir.basename()[0] == "bin") {
++          auto includeDir = binDir.parent().append("include").toNativeString(true);
++          KJ_IF_SOME(dir, getSourceDirectory(includeDir, false)) {
++            loader.addImportPath(dir);
++          }
++        }
++      }
++
+       static constexpr kj::StringPtr STANDARD_IMPORT_PATHS[] = {
+         "/usr/local/include"_kj,
+         "/usr/include"_kj,
+@@ -1922,6 +1939,34 @@
+ 
+   bool hadErrors_ = false;
+ 
++  static kj::Maybe<kj::String> getExecutablePath() {
++    // Returns the absolute path of the running executable, with symlinks resolved.
++#if _WIN32
++    wchar_t buffer[32768];
++    DWORD len = GetModuleFileNameW(nullptr, buffer, kj::size(buffer));
++    if (len == 0 || len >= kj::size(buffer)) return kj::none;
++    auto result = kj::decodeWideString(kj::arrayPtr(buffer, len));
++    if (result.hadErrors) return kj::none;
++    return kj::String(kj::mv(result));
++#elif __APPLE__ || __linux__
++#if __APPLE__
++    uint32_t size = 0;
++    _NSGetExecutablePath(nullptr, &size);
++    auto buffer = kj::heapArray<char>(size);
++    if (_NSGetExecutablePath(buffer.begin(), &size) != 0) return kj::none;
++    const char* path = buffer.begin();
++#else
++    const char* path = "/proc/self/exe";
++#endif
++    char* resolved = realpath(path, nullptr);
++    if (resolved == nullptr) return kj::none;
++    KJ_DEFER(free(resolved));
++    return kj::str(resolved);
++#else
++    return kj::none;
++#endif
++  }
++
+   kj::Maybe<const kj::ReadableDirectory&> getSourceDirectory(
+       kj::StringPtr pathStr, bool isSourcePrefix) {
+     auto cwd = disk->getCurrentPath();

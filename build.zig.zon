@@ -1,0 +1,19 @@
+.{
+    .name = .capnproto,
+    .version = "0.1.0",
+    .fingerprint = 0xac017315014b80f2, // Changing this has security and trust implications.
+    .minimum_zig_version = "0.17.0",
+    .dependencies = .{
+        .capnproto = .{
+            .url = "https://github.com/capnproto/capnproto/archive/e866bdbaa3078a4bda9e4287d2d4a773c0986902.zip",
+            .hash = "N-V-__8AAOtVoADX2cijzKpg_nGqAItDVkijv_PR8GWjvfBp",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "create_dotslash.zig",
+        "LICENSE",
+        "README.md",
+    },
+}
